@@ -164,6 +164,14 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(self.text(self.cost(1.30, "zero")), "session $1.30")
         self.assertEqual(self.text(self.cost(1.30, "zero")), "session $1.30")
 
+    def test_state_from_the_initial_cost_bug_hides_the_turn_estimate(self):
+        # Older versions saved the first total as the last increase, e.g. "1.30 1.3000".
+        state = self.home / ".claude-personal/state/statusline-cost-old"
+        state.parent.mkdir(parents=True)
+        state.write_text("1.30 1.3000\n")
+        self.assertEqual(self.text(self.cost(1.30, "old")), "session $1.30")
+        self.assertEqual(self.text(self.cost(1.42, "old")), "~$0.12/turn · session $1.42")
+
     def test_cost_state_write_leaves_no_temporary_files(self):
         self.text(self.cost(1.30))
         self.text(self.cost(1.42))
