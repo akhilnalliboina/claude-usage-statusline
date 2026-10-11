@@ -1,4 +1,4 @@
-"""Run on macOS: python3 -m unittest discover -s tests -v."""
+"""Run on macOS or Linux: python3 -m unittest discover -s tests -v."""
 import json
 import os
 from pathlib import Path
@@ -12,7 +12,7 @@ COMMAND = 'bash "$HOME/.claude-personal/statusline.sh"'
 STATUS_LINE = {"type": "command", "command": COMMAND, "refreshInterval": 5}
 
 
-@unittest.skipUnless(os.uname().sysname == "Darwin", "The unchanged renderer requires macOS")
+@unittest.skipUnless(os.uname().sysname in ("Darwin", "Linux"), "Requires macOS or Linux")
 class SetupTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="statusline test ")
@@ -73,6 +73,28 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((backup / "settings.json").read_text(), original)
         self.assertEqual((backup / "statusline.sh").read_text(), "old renderer\n")
         self.assertEqual((backup / "settings.json").stat().st_mode & 0o777, 0o600)
+
+    def test_linux_setup_preserves_permissions_with_gnu_stat(self):
+        self.write_settings('{}')
+        self.settings.chmod(0o640)
+        bin_dir = self.home / 'bin'
+        bin_dir.mkdir()
+        uname = bin_dir / 'uname'
+        uname.write_text("#!/bin/sh\nprintf 'Linux\\n'\n")
+        uname.chmod(0o700)
+        stat = bin_dir / 'stat'
+        stat.write_text("#!/bin/sh\n"
+                        "if [ \"$1\" = '-c' ] && [ \"$2\" = '%a' ]; then\n"
+                        "  printf '640\\n'\n"
+                        "else\n"
+                        "  printf 'File: filesystem details\\n'\n"
+                        "  exit 1\n"
+                        "fi\n")
+        stat.chmod(0o700)
+        self.env['PATH'] = str(bin_dir) + os.pathsep + os.environ.get('PATH', os.defpath)
+        self.setup_action()
+        self.assertEqual(json.loads(self.settings.read_text())['statusLine'], STATUS_LINE)
+        self.assertEqual(self.settings.stat().st_mode & 0o777, 0o640)
 
     def test_repeated_setup_is_noop(self):
         self.setup_action()

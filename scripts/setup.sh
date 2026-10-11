@@ -1,11 +1,14 @@
 #!/bin/bash
-# Herdr setup action. The renderer itself stays unchanged.
+# Herdr setup action for the Claude Code status line.
 set -euo pipefail
 umask 077
 
 fail() { printf 'Setup failed: %s\n' "$*" >&2; exit 1; }
-[ "$(uname -s)" = Darwin ] || fail 'This status line requires macOS.'
-command -v jq >/dev/null 2>&1 || fail 'Install jq first: brew install jq'
+case "$(uname -s)" in
+  Darwin|Linux) ;;
+  *) fail 'This status line requires macOS or Linux.' ;;
+esac
+command -v jq >/dev/null 2>&1 || fail 'Install jq first (brew install jq, or your Linux package manager).'
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source_script="$root/statusline.sh"
@@ -79,7 +82,10 @@ if [ "$same_settings" = false ]; then
     jq --arg command "$command_text" \
       '.statusLine = {type: "command", command: $command, refreshInterval: 5}' \
       "$backup/settings.json" > "$settings_tmp"
-    chmod "$(stat -f %Lp "$settings")" "$settings_tmp"
+    # GNU first, BSD second. Separate captures discard any failed stdout.
+    mode=$(stat -c %a -- "$settings" 2>/dev/null) ||
+      mode=$(stat -f %Lp -- "$settings" 2>/dev/null)
+    chmod "$mode" "$settings_tmp"
   else
     jq -n --arg command "$command_text" \
       '{statusLine: {type: "command", command: $command, refreshInterval: 5}}' > "$settings_tmp"

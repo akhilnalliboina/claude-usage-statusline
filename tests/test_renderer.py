@@ -12,7 +12,7 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 NOW = 1800000000
 
 
-@unittest.skipUnless(os.uname().sysname == "Darwin", "The renderer requires BSD stat on macOS")
+@unittest.skipUnless(os.uname().sysname in ("Darwin", "Linux"), "Requires macOS or Linux")
 class RendererTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="renderer test ")
@@ -90,6 +90,41 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(self.render({"transcript_path": self.transcript(120)}),
                          "\x1b[2mcache 58:00\x1b[0m\n")
 
+    def test_gnu_stat_mtime_is_supported(self):
+        # Model GNU stat's interface, including non-numeric stdout on the
+        # unsupported BSD invocation. Native GNU stat is also exercised in CI.
+        stat = self.home / "bin/stat"
+        stat.write_text("#!/bin/sh\n"
+                        "if [ \"$1\" = '-c' ] && [ \"$2\" = '%Y' ]; then\n"
+                        "  printf '%s\\n' 1799999880\n"
+                        "else\n"
+                        "  printf 'File: filesystem details\\n'\n"
+                        "  exit 1\n"
+                        "fi\n")
+        stat.chmod(0o700)
+        self.assertEqual(self.render({"transcript_path": self.transcript(120)}),
+                         "\x1b[2mcache 58:00\x1b[0m\n")
+
+    def test_failed_gnu_stat_stdout_does_not_contaminate_bsd_result(self):
+        stat = self.home / "bin/stat"
+        stat.write_text("#!/bin/sh\n"
+                        "if [ \"$1\" = '-f' ] && [ \"$2\" = '%m' ]; then\n"
+                        "  printf '%s\\n' 1799999880\n"
+                        "else\n"
+                        "  printf 'not a timestamp\\n'\n"
+                        "  exit 1\n"
+                        "fi\n")
+        stat.chmod(0o700)
+        self.assertEqual(self.render({"transcript_path": self.transcript(120)}),
+                         "\x1b[2mcache 58:00\x1b[0m\n")
+
+    def test_unreadable_stat_omits_cache_without_losing_other_fields(self):
+        stat = self.home / "bin/stat"
+        stat.write_text("#!/bin/sh\nprintf 'not a timestamp\\n'\nexit 1\n")
+        stat.chmod(0o700)
+        self.assertEqual(self.text({"model": {"display_name": "Sonnet"},
+                                    "transcript_path": self.transcript(120)}), "[Sonnet]")
+
     def test_cache_warning_starts_at_five_minutes(self):
         for age, expected in ((3299, "\x1b[2mcache 5:01\x1b[0m\n"),
                               (3300, "\x1b[33mcache 5:00\x1b[0m\n"),
@@ -116,10 +151,7 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(self.text(self.cost(1.42)), "~$0.12/turn · session $1.42")
         self.assertEqual(self.text(self.cost(1.47)), "~$0.05/turn · session $1.47")
 
-    @unittest.expectedFailure
     def test_unchanged_baseline_does_not_show_per_turn_cost(self):
-        # Known bug: the first observed total is saved as an increase from zero.
-        # On the next unchanged refresh, it is shown as the per-turn estimate.
         self.text(self.cost(1.30))
         self.assertEqual(self.text(self.cost(1.30)), "session $1.30")
 
