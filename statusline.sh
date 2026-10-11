@@ -17,13 +17,20 @@ WARN_AT=300    # Show the countdown in yellow when this many seconds are left.
 
 DIM='\033[2m'; YELLOW='\033[33m'; RED='\033[31m'; RESET='\033[0m'
 
-model=$(printf '%s' "$input" | jq -r '.model.display_name // empty')
-transcript=$(printf '%s' "$input" | jq -r '.transcript_path // empty')
-session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
-cost=$(printf '%s' "$input" | jq -r '.cost.total_cost_usd // empty')
-ctx_tokens=$(printf '%s' "$input" | jq -r '.context_window.current_usage | if . then (.input_tokens + .cache_creation_input_tokens + .cache_read_input_tokens) else empty end')
-five=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
-seven=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+# One jq call reads every field. The unit separator (0x1f) is not whitespace, so read keeps
+# empty fields in place; a missing value becomes an empty string.
+IFS=$'\x1f' read -r model transcript session_id cost ctx_tokens five seven < <(
+  printf '%s' "$input" | jq -r '[
+    (.model.display_name // ""),
+    (.transcript_path // ""),
+    (.session_id // ""),
+    (.cost.total_cost_usd // ""),
+    (.context_window.current_usage
+      | if . then (.input_tokens + .cache_creation_input_tokens + .cache_read_input_tokens) else "" end),
+    (.rate_limits.five_hour.used_percentage // ""),
+    (.rate_limits.seven_day.used_percentage // "")
+  ] | map(tostring) | join("\u001f")' 2>/dev/null
+)
 
 parts=()
 [ -n "$model" ] && parts+=("${DIM}[${model}]${RESET}")
