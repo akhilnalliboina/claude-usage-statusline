@@ -1,0 +1,72 @@
+#!/bin/bash
+# Status line: model, prompt cache countdown, and 5h / 7d usage as plain percentages.
+# Claude Code runs this on every refresh (settings.json: statusLine.refreshInterval) and
+# sends the session data as JSON on stdin.
+input=$(cat)
+
+CACHE_TTL=3600 # The prompt cache lives one hour after the last model call.
+WARN_AT=300    # Show the countdown in yellow when this many seconds are left.
+
+DIM='\033[2m'; YELLOW='\033[33m'; RED='\033[31m'; RESET='\033[0m'
+
+model=$(printf '%s' "$input" | jq -r '.model.display_name // empty')
+transcript=$(printf '%s' "$input" | jq -r '.transcript_path // empty')
+session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
+cost=$(printf '%s' "$input" | jq -r '.cost.total_cost_usd // empty')
+ctx_tokens=$(printf '%s' "$input" | jq -r '.context_window.current_usage | if . then (.input_tokens + .cache_creation_input_tokens + .cache_read_input_tokens) else empty end')
+five=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+seven=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+
+parts=()
+[ -n "$model" ] && parts+=("${DIM}[${model}]${RESET}")
+
+# The transcript file changes on every model call, so its age is the age of the cache.
+# Nothing to show before the first reply (no file yet).
+if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+  left=$((CACHE_TTL - ($(date +%s) - $(stat -f %m "$transcript"))))
+  if [ "$left" -le 0 ]; then
+    parts+=("${RED}cache cold${RESET}")
+  else
+    color=$DIM
+    [ "$left" -le "$WARN_AT" ] && color=$YELLOW
+    parts+=("$(printf '%bcache %d:%02d%b' "$color" $((left / 60)) $((left % 60)) "$RESET")")
+  fi
+fi
+
+# The context size now: the tokens the next model call sends, including cached ones.
+if [ -n "$ctx_tokens" ] && [ "$ctx_tokens" -gt 0 ]; then
+  if [ "$ctx_tokens" -ge 1000 ]; then
+    parts+=("$(printf '%bctx %dK%b' "$DIM" $((ctx_tokens / 1000)) "$RESET")")
+  else
+    parts+=("$(printf '%bctx %d%b' "$DIM" "$ctx_tokens" "$RESET")")
+  fi
+fi
+
+# The input has the total cost only. The cost of the last turn is the last rise of that total.
+# The last seen total and the last rise are kept in a small file for each session, because
+# this script starts fresh on every refresh and cannot remember anything itself.
+if [ -n "$cost" ] && [ -n "$session_id" ] && [ "$(awk -v c="$cost" 'BEGIN { print (c > 0) }')" = 1 ]; then
+  state_file="$HOME/.claude-personal/state/statusline-cost-$session_id"
+  [ -f "$state_file" ] && read -r last_total last_turn < "$state_file"
+  last_total=${last_total:-0}; last_turn=${last_turn:-0}
+  if [ "$(awk -v c="$cost" -v l="$last_total" 'BEGIN { print (c > l) }')" = 1 ]; then
+    last_turn=$(awk -v c="$cost" -v l="$last_total" 'BEGIN { printf "%.4f", c - l }')
+    mkdir -p "$(dirname "$state_file")"
+    printf '%s %s\n' "$cost" "$last_turn" > "$state_file"
+  fi
+  if [ "$(awk -v t="$last_turn" 'BEGIN { print (t > 0) }')" = 1 ] && [ "$last_total" != 0 ]; then
+    parts+=("$(printf '%b~$%.2f/turn%b' "$DIM" "$last_turn" "$RESET")")
+  fi
+  parts+=("$(printf '%bsession $%.2f%b' "$DIM" "$cost" "$RESET")")
+fi
+
+[ -n "$five" ] && parts+=("$(printf '%b5h %.0f%%%b' "$DIM" "$five" "$RESET")")
+[ -n "$seven" ] && parts+=("$(printf '%b7d %.0f%%%b' "$DIM" "$seven" "$RESET")")
+
+sep="${DIM} · ${RESET}"
+out=""
+for part in "${parts[@]}"; do
+  out+="${out:+$sep}$part"
+done
+
+printf '%b\n' "$out"
