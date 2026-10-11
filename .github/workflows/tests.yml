@@ -1,0 +1,27 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: Bash syntax and regression tests (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install jq if needed
+        run: command -v jq >/dev/null 2>&1 || brew install jq
+      - name: Check Bash syntax
+        run: bash -n statusline.sh scripts/setup.sh
+      - name: Run setup and renderer tests
+        run: python3 -B -m unittest discover -s tests -v
