@@ -28,6 +28,11 @@ class RendererTests(unittest.TestCase):
         clock.chmod(0o700)
         self.env["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", os.defpath)
 
+    def fake_command(self, name, script):
+        path = self.home / "bin" / name
+        path.write_text("#!/bin/sh\n" + script)
+        path.chmod(0o700)
+
     def render(self, payload):
         result = subprocess.run(
             ["/bin/bash", str(SCRIPT)], input=json.dumps(payload),
@@ -93,35 +98,21 @@ class RendererTests(unittest.TestCase):
     def test_gnu_stat_mtime_is_supported(self):
         # Model GNU stat's interface, including non-numeric stdout on the
         # unsupported BSD invocation. Native GNU stat is also exercised in CI.
-        stat = self.home / "bin/stat"
-        stat.write_text("#!/bin/sh\n"
-                        "if [ \"$1\" = '-c' ] && [ \"$2\" = '%Y' ]; then\n"
-                        "  printf '%s\\n' 1799999880\n"
-                        "else\n"
-                        "  printf 'File: filesystem details\\n'\n"
-                        "  exit 1\n"
-                        "fi\n")
-        stat.chmod(0o700)
+        self.fake_command("stat", "if [ \"$1\" = '-c' ] && [ \"$2\" = '%Y' ]; then\n"
+                                  "  printf '%s\\n' 1799999880\n"
+                                  "else\n  printf 'File: filesystem details\\n'\n  exit 1\nfi\n")
         self.assertEqual(self.render({"transcript_path": self.transcript(120)}),
                          "\x1b[2mcache 58:00\x1b[0m\n")
 
     def test_failed_gnu_stat_stdout_does_not_contaminate_bsd_result(self):
-        stat = self.home / "bin/stat"
-        stat.write_text("#!/bin/sh\n"
-                        "if [ \"$1\" = '-f' ] && [ \"$2\" = '%m' ]; then\n"
-                        "  printf '%s\\n' 1799999880\n"
-                        "else\n"
-                        "  printf 'not a timestamp\\n'\n"
-                        "  exit 1\n"
-                        "fi\n")
-        stat.chmod(0o700)
+        self.fake_command("stat", "if [ \"$1\" = '-f' ] && [ \"$2\" = '%m' ]; then\n"
+                                  "  printf '%s\\n' 1799999880\n"
+                                  "else\n  printf 'not a timestamp\\n'\n  exit 1\nfi\n")
         self.assertEqual(self.render({"transcript_path": self.transcript(120)}),
                          "\x1b[2mcache 58:00\x1b[0m\n")
 
     def test_unreadable_stat_omits_cache_without_losing_other_fields(self):
-        stat = self.home / "bin/stat"
-        stat.write_text("#!/bin/sh\nprintf 'not a timestamp\\n'\nexit 1\n")
-        stat.chmod(0o700)
+        self.fake_command("stat", "printf 'not a timestamp\\n'\nexit 1\n")
         self.assertEqual(self.text({"model": {"display_name": "Sonnet"},
                                     "transcript_path": self.transcript(120)}), "[Sonnet]")
 
@@ -154,6 +145,30 @@ class RendererTests(unittest.TestCase):
     def test_unchanged_baseline_does_not_show_per_turn_cost(self):
         self.text(self.cost(1.30))
         self.assertEqual(self.text(self.cost(1.30)), "session $1.30")
+
+    def test_empty_or_damaged_state_is_treated_as_a_new_baseline(self):
+        # An interrupted write can leave the state file empty or partial.
+        for content in ("", "\n", "garbage x\n"):
+            with self.subTest(content=content):
+                state = self.home / ".claude-personal/state/statusline-cost-damaged"
+                state.parent.mkdir(parents=True, exist_ok=True)
+                state.write_text(content)
+                self.assertEqual(self.text(self.cost(1.30, "damaged")), "session $1.30")
+                self.assertEqual(self.text(self.cost(1.30, "damaged")), "session $1.30")
+                self.assertEqual(self.text(self.cost(1.42, "damaged")), "~$0.12/turn · session $1.42")
+
+    def test_zero_saved_total_is_treated_as_a_new_baseline(self):
+        state = self.home / ".claude-personal/state/statusline-cost-zero"
+        state.parent.mkdir(parents=True)
+        state.write_text("0 0\n")
+        self.assertEqual(self.text(self.cost(1.30, "zero")), "session $1.30")
+        self.assertEqual(self.text(self.cost(1.30, "zero")), "session $1.30")
+
+    def test_cost_state_write_leaves_no_temporary_files(self):
+        self.text(self.cost(1.30))
+        self.text(self.cost(1.42))
+        state_dir = self.home / ".claude-personal/state"
+        self.assertEqual(sorted(p.name for p in state_dir.iterdir()), ["statusline-cost-sample"])
 
     def test_sessions_do_not_share_cost_estimates(self):
         self.text(self.cost(1.30, "one"))

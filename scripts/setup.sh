@@ -84,7 +84,8 @@ if [ "$same_settings" = false ]; then
       "$backup/settings.json" > "$settings_tmp"
     # GNU first, BSD second. Separate captures discard any failed stdout.
     mode=$(stat -c %a -- "$settings" 2>/dev/null) ||
-      mode=$(stat -f %Lp -- "$settings" 2>/dev/null)
+      mode=$(stat -f %Lp -- "$settings" 2>/dev/null) ||
+      fail "Cannot read the permissions of $settings"
     chmod "$mode" "$settings_tmp"
   else
     jq -n --arg command "$command_text" \

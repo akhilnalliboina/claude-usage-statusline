@@ -32,6 +32,11 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
         return result
 
+    def fake_command(self, bin_dir, name, script):
+        path = bin_dir / name
+        path.write_text("#!/bin/sh\n" + script)
+        path.chmod(0o700)
+
     def backups(self):
         directory = Path(self.env["HERDR_PLUGIN_STATE_DIR"]) / "setup-backups"
         return list(directory.iterdir()) if directory.exists() else []
@@ -79,22 +84,24 @@ class SetupTests(unittest.TestCase):
         self.settings.chmod(0o640)
         bin_dir = self.home / 'bin'
         bin_dir.mkdir()
-        uname = bin_dir / 'uname'
-        uname.write_text("#!/bin/sh\nprintf 'Linux\\n'\n")
-        uname.chmod(0o700)
-        stat = bin_dir / 'stat'
-        stat.write_text("#!/bin/sh\n"
-                        "if [ \"$1\" = '-c' ] && [ \"$2\" = '%a' ]; then\n"
-                        "  printf '640\\n'\n"
-                        "else\n"
-                        "  printf 'File: filesystem details\\n'\n"
-                        "  exit 1\n"
-                        "fi\n")
-        stat.chmod(0o700)
+        self.fake_command(bin_dir, 'uname', "printf 'Linux\\n'\n")
+        self.fake_command(bin_dir, 'stat', "if [ \"$1\" = '-c' ] && [ \"$2\" = '%a' ]; then\n"
+                                           "  printf '640\\n'\n"
+                                           "else\n  printf 'File: filesystem details\\n'\n  exit 1\nfi\n")
         self.env['PATH'] = str(bin_dir) + os.pathsep + os.environ.get('PATH', os.defpath)
         self.setup_action()
         self.assertEqual(json.loads(self.settings.read_text())['statusLine'], STATUS_LINE)
         self.assertEqual(self.settings.stat().st_mode & 0o777, 0o640)
+
+    def test_unreadable_permissions_fail_with_a_message(self):
+        self.write_settings('{}')
+        bin_dir = self.home / 'bin'
+        bin_dir.mkdir()
+        self.fake_command(bin_dir, 'stat', "printf 'unreadable\\n'\nexit 1\n")
+        self.env['PATH'] = str(bin_dir) + os.pathsep + os.environ.get('PATH', os.defpath)
+        result = self.setup_action(success=False)
+        self.assertIn('Cannot read the permissions of', result.stderr)
+        self.assertEqual(json.loads(self.settings.read_text()), {})
 
     def test_repeated_setup_is_noop(self):
         self.setup_action()
