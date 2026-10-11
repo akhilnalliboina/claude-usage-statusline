@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "statusline.sh"
@@ -20,6 +21,7 @@ class RendererTests(unittest.TestCase):
         self.home = Path(self.temporary.name)
         self.env = dict(os.environ, HOME=str(self.home), LC_ALL="C")
         self.env.pop("BASH_ENV", None)
+        self.env.pop("CLAUDE_CONFIG_DIR", None)
         # Freeze only the external clock. Bash, jq, stat, and file I/O stay real.
         bin_dir = self.home / "bin"
         bin_dir.mkdir()
@@ -61,6 +63,17 @@ class RendererTests(unittest.TestCase):
     def test_null_fields_are_omitted(self):
         self.assertEqual(self.render({"model": None, "rate_limits": None,
                                       "context_window": None, "cost": None}), "\n")
+
+    def test_malformed_input_renders_an_empty_line_without_errors(self):
+        for raw in ("", "not json", "[]", "null"):
+            with self.subTest(raw=raw):
+                result = subprocess.run(["/bin/bash", str(SCRIPT)], input=raw, env=self.env,
+                                        text=True, capture_output=True, timeout=10)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "\n", ""))
+
+    def test_model_name_with_spaces_and_unicode_is_kept(self):
+        self.assertEqual(self.text({"model": {"display_name": "Opus 4.1 ✓ 日本"}, "rate_limits": {
+            "five_hour": {"used_percentage": 5}}}), "[Opus 4.1 ✓ 日本] · 5h 5%")
 
     def test_model_and_usage_percentages(self):
         self.assertEqual(self.text({"model": {"display_name": "Sonnet"}, "rate_limits": {
@@ -123,6 +136,21 @@ class RendererTests(unittest.TestCase):
             with self.subTest(age=age):
                 self.assertEqual(self.render({"transcript_path": self.transcript(age)}), expected)
 
+    def test_cache_ttl_can_be_set_with_an_environment_variable(self):
+        self.env["STATUSLINE_CACHE_TTL"] = "600"
+        for age, expected in ((120, "\x1b[2mcache 8:00\x1b[0m\n"),
+                              (360, "\x1b[33mcache 4:00\x1b[0m\n"),
+                              (600, "\x1b[31mcache cold\x1b[0m\n")):
+            with self.subTest(age=age):
+                self.assertEqual(self.render({"transcript_path": self.transcript(age)}), expected)
+
+    def test_invalid_cache_ttl_falls_back_to_one_hour(self):
+        for value in ("", "0", "-5", "abc", "1.5", "60 0"):
+            with self.subTest(value=value):
+                self.env["STATUSLINE_CACHE_TTL"] = value
+                self.assertEqual(self.render({"transcript_path": self.transcript(120)}),
+                                 "\x1b[2mcache 58:00\x1b[0m\n")
+
     def test_cache_is_red_at_and_after_expiry(self):
         for age in (3600, 4000):
             with self.subTest(age=age):
@@ -150,7 +178,7 @@ class RendererTests(unittest.TestCase):
         # An interrupted write can leave the state file empty or partial.
         for content in ("", "\n", "garbage x\n"):
             with self.subTest(content=content):
-                state = self.home / ".claude-personal/state/statusline-cost-damaged"
+                state = self.home / ".claude/statusline/state/statusline-cost-damaged"
                 state.parent.mkdir(parents=True, exist_ok=True)
                 state.write_text(content)
                 self.assertEqual(self.text(self.cost(1.30, "damaged")), "session $1.30")
@@ -158,7 +186,7 @@ class RendererTests(unittest.TestCase):
                 self.assertEqual(self.text(self.cost(1.42, "damaged")), "~$0.12/turn · session $1.42")
 
     def test_zero_saved_total_is_treated_as_a_new_baseline(self):
-        state = self.home / ".claude-personal/state/statusline-cost-zero"
+        state = self.home / ".claude/statusline/state/statusline-cost-zero"
         state.parent.mkdir(parents=True)
         state.write_text("0 0\n")
         self.assertEqual(self.text(self.cost(1.30, "zero")), "session $1.30")
@@ -166,16 +194,32 @@ class RendererTests(unittest.TestCase):
 
     def test_state_from_the_initial_cost_bug_hides_the_turn_estimate(self):
         # Older versions saved the first total as the last increase, e.g. "1.30 1.3000".
-        state = self.home / ".claude-personal/state/statusline-cost-old"
+        state = self.home / ".claude/statusline/state/statusline-cost-old"
         state.parent.mkdir(parents=True)
         state.write_text("1.30 1.3000\n")
         self.assertEqual(self.text(self.cost(1.30, "old")), "session $1.30")
         self.assertEqual(self.text(self.cost(1.42, "old")), "~$0.12/turn · session $1.42")
 
+    def test_new_session_removes_state_older_than_a_week(self):
+        state_dir = self.home / ".claude/statusline/state"
+        state_dir.mkdir(parents=True)
+        old, recent, other = (state_dir / "statusline-cost-old", state_dir / "statusline-cost-recent",
+                              state_dir / "unrelated")
+        # The frozen clock covers only date +%s. find reads the real clock, so age from now.
+        for path, age_days in ((old, 8), (recent, 6), (other, 30)):
+            path.write_text("1.00 0\n")
+            stamp = time.time() - age_days * 86400
+            os.utime(path, (stamp, stamp))
+        self.text(self.cost(1.30, "fresh"))
+        self.assertFalse(old.exists())
+        self.assertTrue(recent.exists())
+        self.assertTrue(other.exists())
+        self.assertTrue((state_dir / "statusline-cost-fresh").exists())
+
     def test_cost_state_write_leaves_no_temporary_files(self):
         self.text(self.cost(1.30))
         self.text(self.cost(1.42))
-        state_dir = self.home / ".claude-personal/state"
+        state_dir = self.home / ".claude/statusline/state"
         self.assertEqual(sorted(p.name for p in state_dir.iterdir()), ["statusline-cost-sample"])
 
     def test_sessions_do_not_share_cost_estimates(self):
@@ -195,7 +239,7 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(self.text(payload), "session $1.30 · 5h 23%")
         payload["cost"]["total_cost_usd"] = 1.42
         self.assertEqual(self.text(payload), "~$0.12/turn · session $1.42 · 5h 23%")
-        state = self.home / ".claude-personal/state/statusline-cost-sample"
+        state = self.home / ".claude/statusline/state/statusline-cost-sample"
         self.assertEqual(state.read_text(), "1.42 0.1200\n")
 
     def test_zero_cost_is_omitted(self):

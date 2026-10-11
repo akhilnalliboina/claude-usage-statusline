@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-COMMAND = 'bash "$HOME/.claude-personal/statusline.sh"'
+COMMAND = 'bash "$HOME/.claude/statusline/statusline.sh"'
 STATUS_LINE = {"type": "command", "command": COMMAND, "refreshInterval": 5}
 
 
@@ -22,7 +22,7 @@ class SetupTests(unittest.TestCase):
         self.env.pop("CLAUDE_CONFIG_DIR", None)
         self.env["HERDR_PLUGIN_STATE_DIR"] = str(self.home / "plugin state")
         self.settings = self.home / ".claude/settings.json"
-        self.target = self.home / ".claude-personal/statusline.sh"
+        self.target = self.home / ".claude/statusline/statusline.sh"
 
     def setup_action(self, success=True):
         result = subprocess.run(
@@ -66,7 +66,7 @@ class SetupTests(unittest.TestCase):
         original = '{\n  "permissions": {"allow": ["Read"]}, "statusLine": {"command": "old"}, "env": {"EXAMPLE": "value"}\n}\n'
         self.write_settings(original)
         self.settings.chmod(0o640)
-        self.target.parent.mkdir()
+        self.target.parent.mkdir(parents=True)
         self.target.write_text("old renderer\n")
         self.setup_action()
         current = json.loads(self.settings.read_text())
@@ -115,8 +115,29 @@ class SetupTests(unittest.TestCase):
         custom = self.home / "custom config"
         self.env["CLAUDE_CONFIG_DIR"] = str(custom)
         self.setup_action()
-        self.assertEqual(json.loads((custom / "settings.json").read_text())["statusLine"], STATUS_LINE)
+        command = f'bash "{custom}/statusline/statusline.sh"'
+        self.assertEqual(json.loads((custom / "settings.json").read_text())["statusLine"],
+                         dict(STATUS_LINE, command=command))
+        self.assertTrue((custom / "statusline/statusline.sh").is_file())
         self.assertFalse(self.settings.exists())
+        self.assertFalse(self.target.exists())
+
+    def test_rejects_install_paths_the_shell_would_expand(self):
+        self.env["CLAUDE_CONFIG_DIR"] = str(self.home / "bad$dir")
+        result = self.setup_action(success=False)
+        self.assertIn("Unsupported character", result.stderr)
+        self.assertFalse((self.home / "bad$dir").exists())
+
+    def test_legacy_install_is_replaced_and_left_in_place(self):
+        legacy = self.home / ".claude-personal/statusline.sh"
+        legacy.parent.mkdir()
+        legacy.write_text("legacy renderer\n")
+        self.write_settings(json.dumps({"statusLine": {
+            "type": "command", "command": 'bash "$HOME/.claude-personal/statusline.sh"',
+            "refreshInterval": 5}}))
+        self.setup_action()
+        self.assertEqual(json.loads(self.settings.read_text())["statusLine"], STATUS_LINE)
+        self.assertEqual(legacy.read_text(), "legacy renderer\n")
 
     def test_rejects_invalid_or_non_object_settings_without_changes(self):
         for invalid in ('{broken', '[]', 'null', '{}\n{}'):
@@ -139,7 +160,7 @@ class SetupTests(unittest.TestCase):
     def test_rejects_script_symlink(self):
         other = self.home / "other.sh"
         other.write_text('old renderer')
-        self.target.parent.mkdir()
+        self.target.parent.mkdir(parents=True)
         self.target.symlink_to(other)
         self.setup_action(success=False)
         self.assertEqual(other.read_text(), 'old renderer')
@@ -165,7 +186,7 @@ class SetupTests(unittest.TestCase):
     def test_backup_fallback_without_herdr_environment(self):
         self.env.pop('HERDR_PLUGIN_STATE_DIR')
         self.setup_action()
-        self.assertEqual(len(list((self.home / '.claude-personal/state/setup-backups').iterdir())), 1)
+        self.assertEqual(len(list((self.home / '.claude/statusline/state/setup-backups').iterdir())), 1)
 
 
 if __name__ == '__main__':

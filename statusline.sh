@@ -9,18 +9,28 @@ input=$(cat)
 # LC_NUMERIC, so it is the one to set.
 export LC_ALL=C
 
-CACHE_TTL=3600 # The prompt cache lives one hour after the last model call.
+# The prompt cache lives one hour after the last model call. Set STATUSLINE_CACHE_TTL (seconds)
+# if yours is shorter. Anything that is not a positive whole number falls back to one hour.
+CACHE_TTL=${STATUSLINE_CACHE_TTL:-3600}
+[[ $CACHE_TTL =~ ^[1-9][0-9]{0,6}$ ]] || CACHE_TTL=3600
 WARN_AT=300    # Show the countdown in yellow when this many seconds are left.
 
 DIM='\033[2m'; YELLOW='\033[33m'; RED='\033[31m'; RESET='\033[0m'
 
-model=$(printf '%s' "$input" | jq -r '.model.display_name // empty')
-transcript=$(printf '%s' "$input" | jq -r '.transcript_path // empty')
-session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
-cost=$(printf '%s' "$input" | jq -r '.cost.total_cost_usd // empty')
-ctx_tokens=$(printf '%s' "$input" | jq -r '.context_window.current_usage | if . then (.input_tokens + .cache_creation_input_tokens + .cache_read_input_tokens) else empty end')
-five=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
-seven=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+# One jq call reads every field. The unit separator (0x1f) is not whitespace, so read keeps
+# empty fields in place; a missing value becomes an empty string.
+IFS=$'\x1f' read -r model transcript session_id cost ctx_tokens five seven < <(
+  printf '%s' "$input" | jq -r '[
+    (.model.display_name // ""),
+    (.transcript_path // ""),
+    (.session_id // ""),
+    (.cost.total_cost_usd // ""),
+    (.context_window.current_usage
+      | if . then (.input_tokens + .cache_creation_input_tokens + .cache_read_input_tokens) else "" end),
+    (.rate_limits.five_hour.used_percentage // ""),
+    (.rate_limits.seven_day.used_percentage // "")
+  ] | map(tostring) | join("\u001f")' 2>/dev/null
+)
 
 parts=()
 [ -n "$model" ] && parts+=("${DIM}[${model}]${RESET}")
@@ -55,7 +65,8 @@ fi
 # The last seen total and the last rise are kept in a small file for each session, because
 # this script starts fresh on every refresh and cannot remember anything itself.
 if [ -n "$cost" ] && [ -n "$session_id" ] && [ "$(awk -v c="$cost" 'BEGIN { print (c > 0) }')" = 1 ]; then
-  state_file="$HOME/.claude-personal/state/statusline-cost-$session_id"
+  state_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline/state"
+  state_file="$state_dir/statusline-cost-$session_id"
   number='^[0-9]+([.][0-9]+)?$'
   last_total=''; last_turn=''; save=false
   [ -f "$state_file" ] && read -r last_total last_turn < "$state_file"
@@ -64,13 +75,15 @@ if [ -n "$cost" ] && [ -n "$session_id" ] && [ "$(awk -v c="$cost" 'BEGIN { prin
     # Missing, empty, damaged, or zero state: establish a baseline, not an increase from
     # zero, so the first observed session total is not shown as one turn's cost.
     last_total=$cost; last_turn=0; save=true
+    # A new session is the moment to drop state left by sessions that ended long ago.
+    find "$state_dir" -maxdepth 1 -name 'statusline-cost-*' -mtime +7 -exec rm -f {} + 2>/dev/null
   elif [ "$(awk -v c="$cost" -v l="$last_total" 'BEGIN { print (c > l) }')" = 1 ]; then
     last_turn=$(awk -v c="$cost" -v l="$last_total" 'BEGIN { printf "%.4f", c - l }')
     save=true
   fi
   if [ "$save" = true ]; then
     # Write a temporary file and rename it, so a concurrent refresh never reads a partial file.
-    mkdir -p "$(dirname "$state_file")"
+    mkdir -p "$state_dir"
     printf '%s %s\n' "$cost" "$last_turn" > "$state_file.$$" && mv -f "$state_file.$$" "$state_file"
   fi
   # A saved turn equal to the saved total is the older initial-cost bug (a baseline stored as an

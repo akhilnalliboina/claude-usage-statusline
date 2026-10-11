@@ -20,6 +20,8 @@ Requires **macOS or Linux**, **herdr 0.7.5+**, **Claude Code**, and **jq**. Inst
 
 Setup backs up existing files and changes only Claude Code's `statusLine` setting. Installing the plugin alone does not change settings. It renders inside Claude Code, including Claude Code running in herdr—not as a native herdr status bar. To update, reinstall the plugin and rerun setup.
 
+**Upgrading from 0.2.x:** earlier versions installed to `~/.claude-personal/`. Rerunning setup points `statusLine` at the new location and leaves the old directory untouched, so you can delete it. Cost estimates start from a fresh baseline.
+
 ## Install without herdr
 
 ```sh
@@ -57,14 +59,18 @@ The first cost observation establishes a baseline. Repeated refreshes keep showi
 
 The script uses [Claude Code's status-line JSON input](https://code.claude.com/docs/en/statusline). It is not a Claude Code `/plugin install` package: [plugin settings](https://code.claude.com/docs/en/plugins-reference#settings) do not support the main `statusLine` property. The renderer and setup support GNU `stat` on Linux and BSD `stat` on macOS.
 
+## Cache TTL
+
+The countdown assumes a one-hour prompt cache. If yours is shorter, set `STATUSLINE_CACHE_TTL` (seconds) in the environment Claude Code runs in, for example `STATUSLINE_CACHE_TTL=300`. Invalid values fall back to 3600.
+
 ## Safety and local files
 
 - The renderer makes no network requests and reads neither credentials nor transcript contents. It reads trusted Claude Code JSON and the transcript's modification time.
-- Setup installs `~/.claude-personal/statusline.sh` and merges `statusLine` into `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`). Other settings are preserved.
+- Setup installs `~/.claude/statusline/statusline.sh` and merges `statusLine` into `~/.claude/settings.json`. With `CLAUDE_CONFIG_DIR` set, both live under that directory instead. Other settings are preserved.
 - Setup rejects invalid or non-object JSON, symlinks, and non-file targets. An identical script and setting make setup a no-op.
-- Setup prints a backup path containing the original files, `.absent` markers for missing files, and `locations.txt`. Herdr backups use its plugin state directory; direct setup uses `~/.claude-personal/state/setup-backups/` unless `HERDR_PLUGIN_STATE_DIR` is set.
+- Setup prints a backup path containing the original files, `.absent` markers for missing files, and `locations.txt`. Herdr backups use its plugin state directory; direct setup uses `~/.claude/statusline/state/setup-backups/` unless `HERDR_PLUGIN_STATE_DIR` is set.
 - Backups can contain private settings or credentials. They stay local. Keep them private and delete them when no longer needed.
-- Cost state lives in `~/.claude-personal/state/statusline-cost-<session_id>`. Each file contains total cost and the last increase. Files persist until removed. State from older versions is read as is; an old incorrect whole-session estimate is hidden until the next cost increase.
+- Cost state lives in `~/.claude/statusline/state/statusline-cost-<session_id>` (under `$CLAUDE_CONFIG_DIR` when set). Each file contains total cost and the last increase. The renderer deletes `statusline-cost-*` files older than 7 days when a new session starts. State from older versions is read as is; an old incorrect whole-session estimate is hidden until the next cost increase.
 - Close other settings editors before setup. Each file replacement is atomic, but the pair is not one transaction. Backups cover partial failures.
 
 To inspect the herdr setup result and backup path:
@@ -76,7 +82,7 @@ herdr plugin log list --plugin akhilnalliboina.claude-usage-statusline
 ## Remove or restore
 
 1. Use the setup backup to restore the previous `statusLine` property, or remove it if there was none. Do not overwrite unrelated settings changed since setup.
-2. Restore the previous script if backed up. If `statusline.sh.absent` exists, delete the installed script. You can remove this script's cost state files; leave other files in `~/.claude-personal` intact.
+2. Restore the previous script if backed up. If `statusline.sh.absent` exists, delete the installed script. You can remove this script's cost state files; leave other files in the `statusline` directory intact.
 3. If installed through herdr, run:
    ```sh
    herdr plugin uninstall akhilnalliboina.claude-usage-statusline
