@@ -10,17 +10,30 @@ permissions:
   contents: read
 
 jobs:
-  macos:
-    name: Bash syntax and regression tests (macOS)
-    runs-on: macos-latest
+  tests:
+    name: Bash syntax and regression tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
       - name: Install jq if needed
-        run: command -v jq >/dev/null 2>&1 || brew install jq
+        shell: bash
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            if [[ "$RUNNER_OS" == "macOS" ]]; then
+              brew install jq
+            else
+              sudo apt-get update
+              sudo apt-get install -y jq
+            fi
+          fi
       - name: Check Bash syntax
         run: bash -n statusline.sh scripts/setup.sh
       - name: Run setup and renderer tests

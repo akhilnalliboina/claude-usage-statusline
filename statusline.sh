@@ -22,8 +22,12 @@ parts=()
 
 # The transcript file changes on every model call, so its age is the age of the cache.
 # Nothing to show before the first reply (no file yet).
-if [ -n "$transcript" ] && [ -f "$transcript" ]; then
-  left=$((CACHE_TTL - ($(date +%s) - $(stat -f %m "$transcript"))))
+# Capture each attempt separately, so failed stat output cannot enter arithmetic.
+# GNU stat uses -c; BSD stat uses -f. Omit cache if neither can read the file.
+if [ -n "$transcript" ] && [ -f "$transcript" ] &&
+  { modified=$(stat -c %Y -- "$transcript" 2>/dev/null) ||
+    modified=$(stat -f %m -- "$transcript" 2>/dev/null); }; then
+  left=$((CACHE_TTL - ($(date +%s) - modified)))
   if [ "$left" -le 0 ]; then
     parts+=("${RED}cache cold${RESET}")
   else
@@ -47,8 +51,16 @@ fi
 # this script starts fresh on every refresh and cannot remember anything itself.
 if [ -n "$cost" ] && [ -n "$session_id" ] && [ "$(awk -v c="$cost" 'BEGIN { print (c > 0) }')" = 1 ]; then
   state_file="$HOME/.claude-personal/state/statusline-cost-$session_id"
-  [ -f "$state_file" ] && read -r last_total last_turn < "$state_file"
-  last_total=${last_total:-0}; last_turn=${last_turn:-0}
+  if [ -f "$state_file" ]; then
+    read -r last_total last_turn < "$state_file"
+    last_total=${last_total:-0}; last_turn=${last_turn:-0}
+  else
+    # Establish a baseline, not an increase from zero. Repeated refreshes must
+    # not mistake the first observed session total for the cost of one turn.
+    last_total=$cost; last_turn=0
+    mkdir -p "$(dirname "$state_file")"
+    printf '%s %s\n' "$cost" "$last_turn" > "$state_file"
+  fi
   if [ "$(awk -v c="$cost" -v l="$last_total" 'BEGIN { print (c > l) }')" = 1 ]; then
     last_turn=$(awk -v c="$cost" -v l="$last_total" 'BEGIN { printf "%.4f", c - l }')
     mkdir -p "$(dirname "$state_file")"
