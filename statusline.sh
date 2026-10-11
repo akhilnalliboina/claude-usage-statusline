@@ -4,6 +4,11 @@
 # sends the session data as JSON on stdin.
 input=$(cat)
 
+# Numbers from Claude Code and the saved state use a dot. A locale with a decimal comma
+# (de_DE, fr_FR) would make printf reject them and print wrong values. LC_ALL wins over
+# LC_NUMERIC, so it is the one to set.
+export LC_ALL=C
+
 CACHE_TTL=3600 # The prompt cache lives one hour after the last model call.
 WARN_AT=300    # Show the countdown in yellow when this many seconds are left.
 
