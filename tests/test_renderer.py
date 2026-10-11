@@ -125,6 +125,21 @@ class RendererTests(unittest.TestCase):
             with self.subTest(age=age):
                 self.assertEqual(self.render({"transcript_path": self.transcript(age)}), expected)
 
+    def test_cache_ttl_can_be_set_with_an_environment_variable(self):
+        self.env["STATUSLINE_CACHE_TTL"] = "600"
+        for age, expected in ((120, "\x1b[2mcache 8:00\x1b[0m\n"),
+                              (360, "\x1b[33mcache 4:00\x1b[0m\n"),
+                              (600, "\x1b[31mcache cold\x1b[0m\n")):
+            with self.subTest(age=age):
+                self.assertEqual(self.render({"transcript_path": self.transcript(age)}), expected)
+
+    def test_invalid_cache_ttl_falls_back_to_one_hour(self):
+        for value in ("", "0", "-5", "abc", "1.5", "60 0"):
+            with self.subTest(value=value):
+                self.env["STATUSLINE_CACHE_TTL"] = value
+                self.assertEqual(self.render({"transcript_path": self.transcript(120)}),
+                                 "\x1b[2mcache 58:00\x1b[0m\n")
+
     def test_cache_is_red_at_and_after_expiry(self):
         for age in (3600, 4000):
             with self.subTest(age=age):
