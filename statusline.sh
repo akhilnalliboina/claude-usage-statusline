@@ -55,7 +55,8 @@ fi
 # The last seen total and the last rise are kept in a small file for each session, because
 # this script starts fresh on every refresh and cannot remember anything itself.
 if [ -n "$cost" ] && [ -n "$session_id" ] && [ "$(awk -v c="$cost" 'BEGIN { print (c > 0) }')" = 1 ]; then
-  state_file="$HOME/.claude-personal/state/statusline-cost-$session_id"
+  state_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline/state"
+  state_file="$state_dir/statusline-cost-$session_id"
   number='^[0-9]+([.][0-9]+)?$'
   last_total=''; last_turn=''; save=false
   [ -f "$state_file" ] && read -r last_total last_turn < "$state_file"
@@ -70,7 +71,7 @@ if [ -n "$cost" ] && [ -n "$session_id" ] && [ "$(awk -v c="$cost" 'BEGIN { prin
   fi
   if [ "$save" = true ]; then
     # Write a temporary file and rename it, so a concurrent refresh never reads a partial file.
-    mkdir -p "$(dirname "$state_file")"
+    mkdir -p "$state_dir"
     printf '%s %s\n' "$cost" "$last_turn" > "$state_file.$$" && mv -f "$state_file.$$" "$state_file"
   fi
   # A saved turn equal to the saved total is the older initial-cost bug (a baseline stored as an

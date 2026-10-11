@@ -14,9 +14,18 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source_script="$root/statusline.sh"
 config_dir=${CLAUDE_CONFIG_DIR:-"$HOME/.claude"}
 settings="$config_dir/settings.json"
-target_dir="$HOME/.claude-personal"
+target_dir="$config_dir/statusline"
 target="$target_dir/statusline.sh"
-command_text='bash "$HOME/.claude-personal/statusline.sh"'
+# The command runs through a shell. Keep $HOME unexpanded for the default profile, so the
+# setting stays valid if the home directory moves. Other paths are written out in full.
+case "$target" in
+  *[\"\$\`\\]*) fail "Unsupported character in the install path: $target" ;;
+esac
+if [ "$config_dir" = "$HOME/.claude" ]; then
+  command_text='bash "$HOME/.claude/statusline/statusline.sh"'
+else
+  command_text="bash \"$target\""
+fi
 
 [ -f "$source_script" ] || fail 'The plugin is missing statusline.sh.'
 # Do not replace symlinks, directories, or other special files.
