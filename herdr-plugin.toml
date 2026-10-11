@@ -1,6 +1,6 @@
 id = "akhilnalliboina.claude-usage-statusline"
 name = "Claude usage status line"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.7.5"
 description = "Install the Claude Code usage status line on macOS or Linux, with settings and script backups."
 platforms = ["macos", "linux"]
