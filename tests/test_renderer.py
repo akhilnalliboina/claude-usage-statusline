@@ -164,6 +164,14 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(self.text(self.cost(1.30, "zero")), "session $1.30")
         self.assertEqual(self.text(self.cost(1.30, "zero")), "session $1.30")
 
+    def test_state_from_the_initial_cost_bug_hides_the_turn_estimate(self):
+        # Older versions saved the first total as the last increase, e.g. "1.30 1.3000".
+        state = self.home / ".claude-personal/state/statusline-cost-old"
+        state.parent.mkdir(parents=True)
+        state.write_text("1.30 1.3000\n")
+        self.assertEqual(self.text(self.cost(1.30, "old")), "session $1.30")
+        self.assertEqual(self.text(self.cost(1.42, "old")), "~$0.12/turn · session $1.42")
+
     def test_cost_state_write_leaves_no_temporary_files(self):
         self.text(self.cost(1.30))
         self.text(self.cost(1.42))
@@ -175,6 +183,20 @@ class RendererTests(unittest.TestCase):
         self.text(self.cost(1.42, "one"))
         self.assertEqual(self.text(self.cost(3.00, "two")), "session $3.00")
         self.assertEqual(self.text(self.cost(1.42, "one")), "~$0.12/turn · session $1.42")
+
+    def test_decimal_comma_locale_does_not_change_numbers(self):
+        locales = subprocess.run(["locale", "-a"], text=True, capture_output=True).stdout.split()
+        locale = next((name for name in ("de_DE.UTF-8", "de_DE.utf8", "fr_FR.UTF-8", "fr_FR.utf8")
+                       if name in locales), None)
+        if locale is None:
+            self.skipTest("No decimal-comma locale is installed")
+        self.env["LC_ALL"] = locale
+        payload = dict(self.cost(1.30), rate_limits={"five_hour": {"used_percentage": 22.6}})
+        self.assertEqual(self.text(payload), "session $1.30 · 5h 23%")
+        payload["cost"]["total_cost_usd"] = 1.42
+        self.assertEqual(self.text(payload), "~$0.12/turn · session $1.42 · 5h 23%")
+        state = self.home / ".claude-personal/state/statusline-cost-sample"
+        self.assertEqual(state.read_text(), "1.42 0.1200\n")
 
     def test_zero_cost_is_omitted(self):
         self.assertEqual(self.render(self.cost(0)), "\n")

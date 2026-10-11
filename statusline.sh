@@ -4,6 +4,11 @@
 # sends the session data as JSON on stdin.
 input=$(cat)
 
+# Numbers from Claude Code and the saved state use a dot. A locale with a decimal comma
+# (de_DE, fr_FR) would make printf reject them and print wrong values. LC_ALL wins over
+# LC_NUMERIC, so it is the one to set.
+export LC_ALL=C
+
 CACHE_TTL=3600 # The prompt cache lives one hour after the last model call.
 WARN_AT=300    # Show the countdown in yellow when this many seconds are left.
 
@@ -68,7 +73,9 @@ if [ -n "$cost" ] && [ -n "$session_id" ] && [ "$(awk -v c="$cost" 'BEGIN { prin
     mkdir -p "$(dirname "$state_file")"
     printf '%s %s\n' "$cost" "$last_turn" > "$state_file.$$" && mv -f "$state_file.$$" "$state_file"
   fi
-  if [ "$(awk -v t="$last_turn" 'BEGIN { print (t > 0) }')" = 1 ]; then
+  # A saved turn equal to the saved total is the older initial-cost bug (a baseline stored as an
+  # increase from zero). A real turn cannot equal a total that had a baseline, so hide it.
+  if [ "$(awk -v t="$last_turn" -v l="$last_total" 'BEGIN { d = t - l; print (t > 0 && (d > 0.00005 || d < -0.00005)) }')" = 1 ]; then
     parts+=("$(printf '%b~$%.2f/turn%b' "$DIM" "$last_turn" "$RESET")")
   fi
   parts+=("$(printf '%bsession $%.2f%b' "$DIM" "$cost" "$RESET")")
