@@ -9,7 +9,10 @@ input=$(cat)
 # LC_NUMERIC, so it is the one to set.
 export LC_ALL=C
 
-CACHE_TTL=3600 # The prompt cache lives one hour after the last model call.
+# The prompt cache lives one hour after the last model call. Set STATUSLINE_CACHE_TTL (seconds)
+# if yours is shorter. Anything that is not a positive whole number falls back to one hour.
+CACHE_TTL=${STATUSLINE_CACHE_TTL:-3600}
+[[ $CACHE_TTL =~ ^[1-9][0-9]{0,6}$ ]] || CACHE_TTL=3600
 WARN_AT=300    # Show the countdown in yellow when this many seconds are left.
 
 DIM='\033[2m'; YELLOW='\033[33m'; RED='\033[31m'; RESET='\033[0m'

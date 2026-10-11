@@ -59,6 +59,10 @@ The first cost observation establishes a baseline. Repeated refreshes keep showi
 
 The script uses [Claude Code's status-line JSON input](https://code.claude.com/docs/en/statusline). It is not a Claude Code `/plugin install` package: [plugin settings](https://code.claude.com/docs/en/plugins-reference#settings) do not support the main `statusLine` property. The renderer and setup support GNU `stat` on Linux and BSD `stat` on macOS.
 
+## Cache TTL
+
+The countdown assumes a one-hour prompt cache. If yours is shorter, set `STATUSLINE_CACHE_TTL` (seconds) in the environment Claude Code runs in, for example `STATUSLINE_CACHE_TTL=300`. Invalid values fall back to 3600.
+
 ## Safety and local files
 
 - The renderer makes no network requests and reads neither credentials nor transcript contents. It reads trusted Claude Code JSON and the transcript's modification time.
