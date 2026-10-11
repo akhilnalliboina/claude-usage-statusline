@@ -4,7 +4,7 @@ A small Bash status-line mod for Claude Code. See the model, an estimated prompt
 
 ![Status-line examples](docs/statusline.png)
 
-*Rendered examples from the script's output using sample session data, not a live Claude Code session.*
+*The status line in a live Claude Code session.*
 
 ```text
 [Sonnet] · cache 58:00 · ctx 42K · ~$0.12/turn · session $1.42 · 5h 23% · 7d 41%
