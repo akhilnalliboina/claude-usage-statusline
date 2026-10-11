@@ -55,8 +55,8 @@ if [ -n "$cost" ] && [ -n "$session_id" ] && [ "$(awk -v c="$cost" 'BEGIN { prin
   last_total=''; last_turn=''; save=false
   [ -f "$state_file" ] && read -r last_total last_turn < "$state_file"
   [[ $last_turn =~ $number ]] || last_turn=0
-  if ! [[ $last_total =~ $number ]]; then
-    # Missing, empty, or damaged state: establish a baseline, not an increase from
+  if ! [[ $last_total =~ $number ]] || [ "$(awk -v l="$last_total" 'BEGIN { print (l > 0) }')" != 1 ]; then
+    # Missing, empty, damaged, or zero state: establish a baseline, not an increase from
     # zero, so the first observed session total is not shown as one turn's cost.
     last_total=$cost; last_turn=0; save=true
   elif [ "$(awk -v c="$cost" -v l="$last_total" 'BEGIN { print (c > l) }')" = 1 ]; then
@@ -68,7 +68,7 @@ if [ -n "$cost" ] && [ -n "$session_id" ] && [ "$(awk -v c="$cost" 'BEGIN { prin
     mkdir -p "$(dirname "$state_file")"
     printf '%s %s\n' "$cost" "$last_turn" > "$state_file.$$" && mv -f "$state_file.$$" "$state_file"
   fi
-  if [ "$(awk -v t="$last_turn" 'BEGIN { print (t > 0) }')" = 1 ] && [ "$last_total" != 0 ]; then
+  if [ "$(awk -v t="$last_turn" 'BEGIN { print (t > 0) }')" = 1 ]; then
     parts+=("$(printf '%b~$%.2f/turn%b' "$DIM" "$last_turn" "$RESET")")
   fi
   parts+=("$(printf '%bsession $%.2f%b' "$DIM" "$cost" "$RESET")")
