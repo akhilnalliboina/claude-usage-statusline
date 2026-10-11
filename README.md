@@ -66,7 +66,7 @@ The script uses [Claude Code's status-line JSON input](https://code.claude.com/d
 - Setup rejects invalid or non-object JSON, symlinks, and non-file targets. An identical script and setting make setup a no-op.
 - Setup prints a backup path containing the original files, `.absent` markers for missing files, and `locations.txt`. Herdr backups use its plugin state directory; direct setup uses `~/.claude/statusline/state/setup-backups/` unless `HERDR_PLUGIN_STATE_DIR` is set.
 - Backups can contain private settings or credentials. They stay local. Keep them private and delete them when no longer needed.
-- Cost state lives in `~/.claude/statusline/state/statusline-cost-<session_id>` (under `$CLAUDE_CONFIG_DIR` when set). Each file contains total cost and the last increase. Files persist until removed. State from older versions is read as is; an old incorrect whole-session estimate is hidden until the next cost increase.
+- Cost state lives in `~/.claude/statusline/state/statusline-cost-<session_id>` (under `$CLAUDE_CONFIG_DIR` when set). Each file contains total cost and the last increase. The renderer deletes `statusline-cost-*` files older than 7 days when a new session starts. State from older versions is read as is; an old incorrect whole-session estimate is hidden until the next cost increase.
 - Close other settings editors before setup. Each file replacement is atomic, but the pair is not one transaction. Backups cover partial failures.
 
 To inspect the herdr setup result and backup path:

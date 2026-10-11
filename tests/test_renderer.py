@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "statusline.sh"
@@ -172,6 +173,22 @@ class RendererTests(unittest.TestCase):
         state.write_text("1.30 1.3000\n")
         self.assertEqual(self.text(self.cost(1.30, "old")), "session $1.30")
         self.assertEqual(self.text(self.cost(1.42, "old")), "~$0.12/turn · session $1.42")
+
+    def test_new_session_removes_state_older_than_a_week(self):
+        state_dir = self.home / ".claude/statusline/state"
+        state_dir.mkdir(parents=True)
+        old, recent, other = (state_dir / "statusline-cost-old", state_dir / "statusline-cost-recent",
+                              state_dir / "unrelated")
+        # The frozen clock covers only date +%s. find reads the real clock, so age from now.
+        for path, age_days in ((old, 8), (recent, 6), (other, 30)):
+            path.write_text("1.00 0\n")
+            stamp = time.time() - age_days * 86400
+            os.utime(path, (stamp, stamp))
+        self.text(self.cost(1.30, "fresh"))
+        self.assertFalse(old.exists())
+        self.assertTrue(recent.exists())
+        self.assertTrue(other.exists())
+        self.assertTrue((state_dir / "statusline-cost-fresh").exists())
 
     def test_cost_state_write_leaves_no_temporary_files(self):
         self.text(self.cost(1.30))
