@@ -65,6 +65,8 @@ if [ -n "$cost" ] && [ -n "$session_id" ] && [ "$(awk -v c="$cost" 'BEGIN { prin
     # Missing, empty, damaged, or zero state: establish a baseline, not an increase from
     # zero, so the first observed session total is not shown as one turn's cost.
     last_total=$cost; last_turn=0; save=true
+    # A new session is the moment to drop state left by sessions that ended long ago.
+    find "$state_dir" -maxdepth 1 -name 'statusline-cost-*' -mtime +7 -exec rm -f {} + 2>/dev/null
   elif [ "$(awk -v c="$cost" -v l="$last_total" 'BEGIN { print (c > l) }')" = 1 ]; then
     last_turn=$(awk -v c="$cost" -v l="$last_total" 'BEGIN { printf "%.4f", c - l }')
     save=true
