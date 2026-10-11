@@ -155,6 +155,23 @@ class RendererTests(unittest.TestCase):
         self.text(self.cost(1.30))
         self.assertEqual(self.text(self.cost(1.30)), "session $1.30")
 
+    def test_empty_or_damaged_state_is_treated_as_a_new_baseline(self):
+        # An interrupted write can leave the state file empty or partial.
+        for content in ("", "\n", "garbage x\n"):
+            with self.subTest(content=content):
+                state = self.home / ".claude-personal/state/statusline-cost-damaged"
+                state.parent.mkdir(parents=True, exist_ok=True)
+                state.write_text(content)
+                self.assertEqual(self.text(self.cost(1.30, "damaged")), "session $1.30")
+                self.assertEqual(self.text(self.cost(1.30, "damaged")), "session $1.30")
+                self.assertEqual(self.text(self.cost(1.42, "damaged")), "~$0.12/turn · session $1.42")
+
+    def test_cost_state_write_leaves_no_temporary_files(self):
+        self.text(self.cost(1.30))
+        self.text(self.cost(1.42))
+        state_dir = self.home / ".claude-personal/state"
+        self.assertEqual(sorted(p.name for p in state_dir.iterdir()), ["statusline-cost-sample"])
+
     def test_sessions_do_not_share_cost_estimates(self):
         self.text(self.cost(1.30, "one"))
         self.text(self.cost(1.42, "one"))

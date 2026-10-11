@@ -51,20 +51,22 @@ fi
 # this script starts fresh on every refresh and cannot remember anything itself.
 if [ -n "$cost" ] && [ -n "$session_id" ] && [ "$(awk -v c="$cost" 'BEGIN { print (c > 0) }')" = 1 ]; then
   state_file="$HOME/.claude-personal/state/statusline-cost-$session_id"
-  if [ -f "$state_file" ]; then
-    read -r last_total last_turn < "$state_file"
-    last_total=${last_total:-0}; last_turn=${last_turn:-0}
-  else
-    # Establish a baseline, not an increase from zero. Repeated refreshes must
-    # not mistake the first observed session total for the cost of one turn.
-    last_total=$cost; last_turn=0
-    mkdir -p "$(dirname "$state_file")"
-    printf '%s %s\n' "$cost" "$last_turn" > "$state_file"
-  fi
-  if [ "$(awk -v c="$cost" -v l="$last_total" 'BEGIN { print (c > l) }')" = 1 ]; then
+  number='^[0-9]+([.][0-9]+)?$'
+  last_total=''; last_turn=''; save=false
+  [ -f "$state_file" ] && read -r last_total last_turn < "$state_file"
+  [[ $last_turn =~ $number ]] || last_turn=0
+  if ! [[ $last_total =~ $number ]]; then
+    # Missing, empty, or damaged state: establish a baseline, not an increase from
+    # zero, so the first observed session total is not shown as one turn's cost.
+    last_total=$cost; last_turn=0; save=true
+  elif [ "$(awk -v c="$cost" -v l="$last_total" 'BEGIN { print (c > l) }')" = 1 ]; then
     last_turn=$(awk -v c="$cost" -v l="$last_total" 'BEGIN { printf "%.4f", c - l }')
+    save=true
+  fi
+  if [ "$save" = true ]; then
+    # Write a temporary file and rename it, so a concurrent refresh never reads a partial file.
     mkdir -p "$(dirname "$state_file")"
-    printf '%s %s\n' "$cost" "$last_turn" > "$state_file"
+    printf '%s %s\n' "$cost" "$last_turn" > "$state_file.$$" && mv -f "$state_file.$$" "$state_file"
   fi
   if [ "$(awk -v t="$last_turn" 'BEGIN { print (t > 0) }')" = 1 ] && [ "$last_total" != 0 ]; then
     parts+=("$(printf '%b~$%.2f/turn%b' "$DIM" "$last_turn" "$RESET")")
