@@ -64,6 +64,17 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(self.render({"model": None, "rate_limits": None,
                                       "context_window": None, "cost": None}), "\n")
 
+    def test_malformed_input_renders_an_empty_line_without_errors(self):
+        for raw in ("", "not json", "[]", "null"):
+            with self.subTest(raw=raw):
+                result = subprocess.run(["/bin/bash", str(SCRIPT)], input=raw, env=self.env,
+                                        text=True, capture_output=True, timeout=10)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "\n", ""))
+
+    def test_model_name_with_spaces_and_unicode_is_kept(self):
+        self.assertEqual(self.text({"model": {"display_name": "Opus 4.1 ✓ 日本"}, "rate_limits": {
+            "five_hour": {"used_percentage": 5}}}), "[Opus 4.1 ✓ 日本] · 5h 5%")
+
     def test_model_and_usage_percentages(self):
         self.assertEqual(self.text({"model": {"display_name": "Sonnet"}, "rate_limits": {
             "five_hour": {"used_percentage": 23}, "seven_day": {"used_percentage": 41},
