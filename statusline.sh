@@ -2,6 +2,30 @@
 # Status line: model, prompt cache countdown, and 5h / 7d usage as plain percentages.
 # Claude Code runs this on every refresh (settings.json: statusLine.refreshInterval) and
 # sends the session data as JSON on stdin.
+
+# --herdr-bar reads only the last numeric usage snapshot, never credentials or logs.
+usage_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline/state"
+usage_file="$usage_dir/herdr-usage.json"
+if [ "${1:-}" = --herdr-bar ]; then
+  if [ -f "$usage_file" ] && [ ! -L "$usage_file" ]; then
+    jq -r --argjson now "$(date +%s)" '
+      def percentage: type == "number" and . >= 0 and . <= 100;
+      select(type == "object")
+      | select(.observed_at | type == "number")
+      | select(.observed_at > 0 and .observed_at <= $now)
+      | . as $snapshot
+      | [
+          (if (.five_hour | percentage) then "5h \(.five_hour | round)%" else empty end),
+          (if (.seven_day | percentage) then "7d \(.seven_day | round)%" else empty end)
+        ]
+      | select(length > 0)
+      | "CC " + join(" · ") +
+        (if $now - $snapshot.observed_at > 1800 then " (stale)" else "" end)
+    ' "$usage_file" 2>/dev/null || true
+  fi
+  exit 0
+fi
+
 input=$(cat)
 
 # Numbers from Claude Code and the saved state use a dot. A locale with a decimal comma
@@ -31,6 +55,28 @@ IFS=$'\x1f' read -r model transcript session_id cost ctx_tokens five seven < <(
     (.rate_limits.seven_day.used_percentage // "")
   ] | map(tostring) | join("\u001f")' 2>/dev/null
 )
+
+# Save only valid usage readings. Missing/invalid input must not make old data
+# look fresh. A private temporary file and rename keep concurrent readers safe.
+# Cache failures must never break Claude Code rendering.
+(
+  umask 077
+  snapshot=$(printf '%s' "$input" | jq -ce --argjson now "$(date +%s)" '
+    def percentage: type == "number" and . >= 0 and . <= 100;
+    select(type == "object")
+    | {observed_at: $now,
+       five_hour: .rate_limits.five_hour.used_percentage,
+       seven_day: .rate_limits.seven_day.used_percentage}
+    | select((.five_hour | percentage) or (.seven_day | percentage))
+    | if (.five_hour | percentage) then . else .five_hour = null end
+    | if (.seven_day | percentage) then . else .seven_day = null end
+  ') || exit 0
+  [ ! -L "$usage_dir" ] && [ ! -L "$usage_file" ] || exit 0
+  mkdir -p "$usage_dir" || exit 0
+  temporary=$(mktemp "$usage_dir/.herdr-usage.XXXXXX") || exit 0
+  trap 'rm -f "$temporary"' EXIT
+  printf '%s\n' "$snapshot" > "$temporary" && mv -f "$temporary" "$usage_file"
+) 2>/dev/null
 
 parts=()
 [ -n "$model" ] && parts+=("${DIM}[${model}]${RESET}")

@@ -90,6 +90,91 @@ class RendererTests(unittest.TestCase):
             "five_hour": {"used_percentage": 22.6}, "seven_day": {"used_percentage": 40.4},
         }}), "5h 23% · 7d 40%")
 
+    def bar(self):
+        result = subprocess.run(["/bin/bash", str(SCRIPT), "--herdr-bar"],
+                                env=self.env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        return result.stdout.rstrip("\n")
+
+    def usage_cache(self):
+        profile = Path(self.env.get("CLAUDE_CONFIG_DIR", self.home / ".claude"))
+        return profile / "statusline/state/herdr-usage.json"
+
+    def test_bar_is_empty_before_usage_is_received(self):
+        self.assertEqual(self.bar(), "")
+
+    def test_bar_reuses_usage_without_changing_renderer_output(self):
+        payload = {"rate_limits": {"five_hour": {"used_percentage": 22.6},
+                                   "seven_day": {"used_percentage": 40.4}}}
+        self.assertEqual(self.text(payload), "5h 23% · 7d 40%")
+        self.assertEqual(self.bar(), "CC 5h 23% · 7d 40%")
+        cache = self.usage_cache()
+        self.assertEqual(json.loads(cache.read_text()),
+                         {"observed_at": NOW, "five_hour": 22.6, "seven_day": 40.4})
+        self.assertEqual(cache.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(sorted(p.name for p in cache.parent.iterdir()), [cache.name])
+
+    def test_bar_keeps_zero_and_omits_missing_windows(self):
+        self.text({"rate_limits": {"five_hour": {"used_percentage": 0}}})
+        self.assertEqual(self.bar(), "CC 5h 0%")
+
+    def test_missing_or_invalid_usage_does_not_refresh_saved_reading(self):
+        self.text({"rate_limits": {"five_hour": {"used_percentage": 23}}})
+        cache = self.usage_cache()
+        saved = cache.read_text()
+        for payload in ({}, {"rate_limits": {"five_hour": {"used_percentage": "bad"}}}):
+            result = subprocess.run(["/bin/bash", str(SCRIPT)], input=json.dumps(payload),
+                                    env=self.env, text=True, capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(cache.read_text(), saved)
+
+    def test_usage_cache_failure_does_not_break_renderer(self):
+        cache = self.usage_cache()
+        cache.parent.parent.mkdir(parents=True)
+        cache.parent.write_text("not a directory")
+        self.assertEqual(self.text({"rate_limits": {
+            "five_hour": {"used_percentage": 23}}}), "5h 23%")
+        self.assertEqual(self.bar(), "")
+
+    def test_usage_cache_symlink_is_not_read_or_replaced(self):
+        cache = self.usage_cache()
+        cache.parent.mkdir(parents=True)
+        target = self.home / "unrelated.json"
+        original = json.dumps({"observed_at": NOW, "five_hour": 99})
+        target.write_text(original)
+        cache.symlink_to(target)
+        self.assertEqual(self.text({"rate_limits": {
+            "five_hour": {"used_percentage": 23}}}), "5h 23%")
+        self.assertEqual(self.bar(), "")
+        self.assertTrue(cache.is_symlink())
+        self.assertEqual(target.read_text(), original)
+
+    def test_bar_marks_old_readings_stale(self):
+        self.text({"rate_limits": {"seven_day": {"used_percentage": 41}}})
+        cache = self.usage_cache()
+        data = json.loads(cache.read_text())
+        data["observed_at"] = NOW - 1801
+        cache.write_text(json.dumps(data))
+        self.assertEqual(self.bar(), "CC 7d 41% (stale)")
+
+    def test_bar_ignores_damaged_or_unsafe_cache_data(self):
+        cache = self.usage_cache()
+        cache.parent.mkdir(parents=True)
+        for data in ("broken", "[]", "null", json.dumps({"observed_at": NOW + 1,
+                      "five_hour": 23}), json.dumps({"observed_at": NOW,
+                      "five_hour": "\\u001b[31mbad"})):
+            cache.write_text(data)
+            self.assertEqual(self.bar(), "")
+
+    def test_bar_cache_uses_custom_profile_and_omits_private_payload_fields(self):
+        self.env["CLAUDE_CONFIG_DIR"] = str(self.home / "personal profile")
+        self.text({"session_id": "private-id", "model": {"display_name": "Sonnet"},
+                   "rate_limits": {"five_hour": {"used_percentage": 23}}})
+        self.assertEqual(self.bar(), "CC 5h 23%")
+        self.assertNotIn("private", self.usage_cache().read_text())
+        self.assertFalse((self.home / ".claude").exists())
+
     def test_context_includes_cached_tokens(self):
         self.assertEqual(self.text({"context_window": {"current_usage": {
             "input_tokens": 2000, "cache_creation_input_tokens": 10000,
